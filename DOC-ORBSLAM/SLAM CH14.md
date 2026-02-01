@@ -21,3 +21,10 @@
 ## 一些约定俗成：
 
 <img width="633" height="174" alt="image" src="https://github.com/user-attachments/assets/3226fab8-8fd9-4cb4-8179-69df24d0007c" />
+
+
+
+# ch6
+### 手写高斯牛顿法
+
+<img width="1800" height="1030" alt="image" src="https://github.com/user-attachments/assets/b5ab0de9-63e8-4b59-a2c5-f053b8a2c5f1" />
