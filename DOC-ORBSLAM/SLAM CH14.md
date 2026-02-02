@@ -37,4 +37,34 @@
 
 <img width="729" height="239" alt="image" src="https://github.com/user-attachments/assets/53177e17-f305-42c4-9f21-076cf7d35674" />
 
+### 边的定义
+
+```cpp
+// 这一整个 struct 就是一条“边”的定义
+struct CURVE_FITTING_COST {
+    // 这里存的是边的【观测值 z】
+    CURVE_FITTING_COST(double x, double y) : _x(x), _y(y) {}
+
+    template<typename T>
+    bool operator()(
+        const T* const abc, // 这里是边连接的【顶点变量】
+        T* residual         // 这里计算的是【误差项 e】
+    ) const {
+        // residual = [观测值] - [通过模型推算的预测值]
+        residual[0] = T(_y) - ceres::exp(abc[0] * T(_x) * T(_x) + abc[1] * T(_x) + abc[2]);
+        return true;
+    }
+    const double _x, _y;
+};
+```
+
+#### main函数中：
+
+```cpp
+problem.AddResidualBlock(
+    new ceres::AutoDiffCostFunction<CURVE_FITTING_COST, 1, 3>(x_data[i], y_data[i]), 
+    nullptr, // 这里是【鲁棒核函数】，现在没用
+    abc      // 这里指定这条边连在哪几个【顶点】上
+);
+```
 
