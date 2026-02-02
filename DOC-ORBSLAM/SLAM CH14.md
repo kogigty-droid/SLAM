@@ -62,7 +62,9 @@ struct CURVE_FITTING_COST {
 
 ```cpp
 problem.AddResidualBlock(
-    new ceres::AutoDiffCostFunction<CURVE_FITTING_COST, 1, 3>(x_data[i], y_data[i]), 
+    new ceres::AutoDiffCostFunction<CURVE_FITTING_COST, 1, 3>(
+        new CURVE_FITTING_COST(x_data[i], y_data[i])
+), 
     nullptr, // 这里是【鲁棒核函数】，现在没用
     abc      // 这里指定这条边连在哪几个【顶点】上
 );
