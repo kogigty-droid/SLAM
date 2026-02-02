@@ -28,3 +28,13 @@
 ### 手写高斯牛顿法
 
 <img width="1800" height="1030" alt="image" src="https://github.com/user-attachments/assets/b5ab0de9-63e8-4b59-a2c5-f053b8a2c5f1" />
+
+### ceres库使用
+
+<img width="999" height="329" alt="image" src="https://github.com/user-attachments/assets/457ed082-2c5c-4531-87ee-eb486fbc7117" />
+
+### 图的一些理解 顶点---优化变量   边----误差项
+
+<img width="729" height="239" alt="image" src="https://github.com/user-attachments/assets/53177e17-f305-42c4-9f21-076cf7d35674" />
+
+
