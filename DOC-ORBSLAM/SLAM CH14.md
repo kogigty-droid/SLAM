@@ -75,4 +75,13 @@ problem.AddResidualBlock(
 
 <img width="998" height="946" alt="image" src="https://github.com/user-attachments/assets/405ce25c-9058-4172-bc79-e243f8b0ed9b" />
 
+### g2o内涉及的一些c++语法
+
+<img width="741" height="405" alt="image" src="https://github.com/user-attachments/assets/3272fdde-d9c2-43dd-91b3-e66b2eed78b5" />
+
+# ch7
+### 特征点匹配
+
+<img width="1920" height="1030" alt="image" src="https://github.com/user-attachments/assets/df257061-a46d-45d3-bffb-c6c79c5eac0b" />
+
 
