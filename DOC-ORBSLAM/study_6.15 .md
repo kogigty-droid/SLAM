@@ -88,5 +88,127 @@ fast_lio需要理解的问题：
 
 ```
 
+2.主循环逻辑：
+```
+接收回调数据
+  ↓
+同步一帧雷达+一段IMU
+  ↓
+IMU预测 + 点云去畸变
+  ↓
+裁剪局部地图
+  ↓
+点云降采样
+  ↓
+如果地图没有初始化，先建第一帧地图
+  ↓
+ESKF 迭代更新位姿
+  ↓
+把当前帧点云加入id-tree 地图
+  ↓
+发布odometry/path/点云
+
+
+```
+
+3.一帧imu数据大概长这样：
+```
+时间戳: 10.01 秒
+角速度: wx, wy, wz
+加速度: ax, ay, az
+姿态: qx, qy, qz, qw
+```
+
+一包IMU数据，包含：
+
+```
+msg->header.stamp       //时间戳
+msg->header.frame_id    //坐标系名字
+
+msgs->angular_velocity.x  //x方向角速度
+msgs->angular_velocity.y  //y方向角速度
+msgs->angular_velocity.z  //z方向角速度
+
+msg->linear_acceleration.x   //x方向线加速度
+msg->linear_acceleration.y   //y方向线加速度
+msg->linear_acceleration.z   //z方向线加速度
+
+msg->orientation.x       //四元数姿态
+msg->orientation.y       
+msg->orientation.z       
+msg->orientation.w       
+
+
+```
+
+imu数据储存起来  用来做：
+```
+imu预积分
+点云去畸变
+状态预测
+ESKF前向传播
+```
+
+## FAST-LIO 不是单独处理雷达，也不是单独处理 IMU，而是把一帧雷达和对应时间段内的 IMU 数据**同步**起来处理。
+数据同步函数 bool sync_packages(MeasureGroup &meas)  处理步骤：
+```
+① 如果任一缓存为空，直接失败：
+```
+```c++
+if (lidar_buffer.empty() || imu_buffer.empty()) {
+    return false;
+}
+```
+
+```
+② 取队首雷达帧：
+```
+```c++
+if(!lidar_pushed)
+{
+    meas.lidar = lidar_buffer.front();
+    meas.lidar_beg_time = time_buffer.front();
+//lidar_pushed 是一个状态标志，防止当前雷达帧还没等到足够 IMU 数据时被重复取出或弹出。
+```
+
+```
+③ 估计这一帧 LiDAR 的结束时间：
+```
+```c++
+lidar_end_time = meas.lidar_beg_time
+               + meas.lidar->points.back().curvature / double(1000);
+//这里很关键：FAST-LIO 把每个点相对当前帧起始时刻的时间，存在点的 curvature 字段里，单位近似是毫秒。所以最后一个点的 curvature / 1000 就是这一帧扫描持续时间。
+//结束时间 = 起始时间 + 扫描这一帧花掉的时间  如12:00：00开始跑步  花了10s跑完---->结束时间：12：00：10；
+```
+```
+④ 检查 IMU 是否已经覆盖到这帧 LiDAR 的结束时间：
+```
+```c++
+if (last_timestamp_imu < lidar_end_time)
+{
+    return false;
+}
+//如果最新 IMU 时间还早于当前 LiDAR 帧结束时间，说明 IMU 数据还不够，暂时不处理这一帧，等下一次回调进来。
+```
+
+```
+⑤ 取出所有时间小于等于 lidar_end_time 的 IMU：
+```
+```c++
+//这一步会把当前雷达帧期间需要的 IMU 数据全部放到：meas.imu
+double imu_time = imu_buffer.front()->header.stamp.toSec();
+meas.imu.clear();
+while ((!imu_buffer.empty()) && (imu_time < lidar_end_time))
+{
+    imu_time = imu_buffer.front()->header.stamp.toSec();
+    if(imu_time > lidar_end_time) break;
+    meas.imu.push_back(imu_buffer.front());
+    imu_buffer.pop_front();
+}
+
+```
+
+
+
 
 
