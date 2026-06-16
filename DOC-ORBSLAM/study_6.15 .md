@@ -88,6 +88,9 @@ fast_lio需要理解的问题：
 
 ```
 
+
+
+
 2.主循环逻辑：
 ```
 接收回调数据
@@ -149,7 +152,7 @@ imu预积分
 ESKF前向传播
 ```
 
-## FAST-LIO 不是单独处理雷达，也不是单独处理 IMU，而是把一帧雷达和对应时间段内的 IMU 数据**同步**起来处理。
+## 4.FAST-LIO 不是单独处理雷达，也不是单独处理 IMU，而是把一帧雷达和对应时间段内的 IMU 数据**同步**起来处理。
 数据同步函数 bool sync_packages(MeasureGroup &meas)  处理步骤：
 ```
 ① 如果任一缓存为空，直接失败：
@@ -206,6 +209,63 @@ while ((!imu_buffer.empty()) && (imu_time < lidar_end_time))
     imu_buffer.pop_front();
 }
 
+```
+```
+⑥ 弹出已经同步完成的雷达帧：
+```
+```c++
+lidar_buffer.pop_front();
+time_buffer.pop_front();
+lidar_pushed = false;
+return true;
+//返回 true 后，主循环才会继续做：p_imu->Process(Measures, kf, feats_undistort); (imu处理和点云去畸变)
+
+```
+
+<img width="476" height="385" alt="image" src="https://github.com/user-attachments/assets/55c274f0-18e9-4f88-bd0b-76e5cc7a7bb7" />
+
+
+## 5.一些注释：
+```
+1)tag 是Liovx点云里对点质量/回波类型的一种标记，这里是在筛选一些不好的点，只保留某些类型的点
+2)curvature 当前点相对这一帧点云开始时刻的时间
+pl_full[i].curvature = 50   ------>表示这个点是当前帧开始后50ms扫到的
+3)blind 雷达盲区阈值
+4)pl_surf 最终保留下来的有效点云。
+5)N_SCANS 雷达总共有多少条扫描线
+最终用于匹配的点云：
+6)feats_undistort 去畸变之后的点云
+  feats_down_body 下采样之后的点云  ------>这个是真正进入地图匹配/ESKF 的
+
+
+
+```
+
+
+## 6. 点云预处理过程：
+
+```
+原始 Livox 点云 msg
+→ 遍历每个点
+→ 判断扫描线和 tag
+→ 按 point_filter_num 降采样
+→ 复制 x/y/z/反射强度/时间
+→ 去掉重复点和盲区点
+→ 存入 pl_surf
+```
+
+```
+原始点云格式是什么？
+livox_ros_driver::CustomMsg
+最终用于匹配的点云是什么？
+两个 一个是去畸变之后的点云feats_undistort，一个是降采样之后的点云feats_down_body
+点云里的每个点有没有时间信息？
+有。时间信息被塞在 PointType::curvature 里，不是真的曲率，而是“点在这一帧内的相对时间”。
+blind 参数在哪里用？
+blind 是近距离滤波阈值，单位米。在avia_handler() 里过滤近点，在give_feature() 里跳过近点
+在plane_judge()、edge_jump_judge() 等特征判断里也会用
+voxel/downsample 有没有做？
+有，做了，而且是后端匹配前做的。
 ```
 
 
