@@ -72,6 +72,9 @@ fast_lio需要理解的问题：
 8. 为什么 FAST-LIO 适合 Livox？
 ```
 
+<img width="679" height="663" alt="image" src="https://github.com/user-attachments/assets/2ea4aedd-3ad5-44ea-acf4-5e89f4889e26" />
+
+
 ## FAST_LIO 理解的过程：
 1.读源码链路：
 ```
