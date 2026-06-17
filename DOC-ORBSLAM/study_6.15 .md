@@ -319,6 +319,49 @@ pl_surf 最终保留下来的有效点/面点
 
 ```
 
+## 7.IMU_Processing.hpp
+三个主要职责：
+```
+IMU_init()       初始化重力、陀螺仪 bias、协方差、外参
+UndistortPcl()  用 IMU 预测轨迹，并对一帧点云做运动补偿
+Process()       外部入口，决定当前是初始化还是正常去畸变
+```
+```
+其中的有做在线均值和方差估计
+mean_acc 平均加速度用来估计重力方向
+mean_gyr 平均角速度，用来估计陀螺仪bias
+cov_acc 加速度噪声估计
+cov_pyr 角速度噪声估计
+```
+<img width="566" height="295" alt="image" src="https://github.com/user-attachments/assets/c40edfc4-d95d-49d2-b165-5dad7eac6844" />
+
+<img width="699" height="371" alt="image" src="https://github.com/user-attachments/assets/b0a39bf6-ee64-4963-a8a3-9a25b45b8986" />
+
+
+```
+init_state.grav = S2(- mean_acc / mean_acc.norm() * G_m_s2);
+grav 根据平均加速度估计重力方向
+
+init_state.bg  = mean_gyr;
+bg 陀螺仪bias = 禁止时平均角速度
+
+init_state.offset_T_L_I = Lidar_T_wrt_IMU;  //LiDAR 到 IMU 平移外参
+init_state.offset_R_L_I = Lidar_R_wrt_IMU;  //LiDAR 到 IMU 平移外参
+
+状态协方差矩阵：P  它表示滤波器对当前状态估计有多不确定。
+P 越大：说明我对这个状态越不自信，后面更愿意被观测修正
+P 越小：说明我对这个状态越自信，后面不太容易被观测大幅修改
+```
+总结：
+```
+IMU 初始化：用静止或近似静止的前几帧 IMU 估计重力方向和陀螺 bias。
+
+IMU 预测：用相邻 IMU 的平均 acc / gyro，调用 kf_state.predict(dt, Q, in) 推进状态。
+
+点云去畸变：利用点的 curvature 时间戳，计算每个点采集时刻的位姿，把点补偿到当前帧末端坐标系。
+```
+
+
 
 
 
