@@ -231,17 +231,31 @@ return true;
 ## 5.一些注释：
 ```
 1)tag 是Liovx点云里对点质量/回波类型的一种标记，这里是在筛选一些不好的点，只保留某些类型的点
+
 2)curvature 当前点相对这一帧点云开始时刻的时间
 pl_full[i].curvature = 50   ------>表示这个点是当前帧开始后50ms扫到的
+
 3)blind 雷达盲区阈值
+
 4)pl_surf 最终保留下来的有效点云。
+
 5)N_SCANS 雷达总共有多少条扫描线
 最终用于匹配的点云：
+
 6)feats_undistort 去畸变之后的点云
   feats_down_body 下采样之后的点云  ------>这个是真正进入地图匹配/ESKF 的
 
+7)pl_full 完整点云/临时完整点云
+  pl_surf 面点/普通有效点   -------最终保留下来、后面要参与匹配/建图/ESKF 更新的有效点云
+  pl_corn 角点/边缘点   ------可能存在但不一定大量使用
 
+8)ptr 是 preprocess 输出的当前帧点云，存在 lidar_buffer 里
 
+9)Measures.lidar 是 sync_packages 从 lidar_buffer 取出的当前帧点云
+
+10)feats_undistort 是 p_imu->Process 对 Measures.lidar 做 IMU 去畸变后的点云
+
+11)feats_down_body 是 feats_undistort 经过 VoxelGrid 下采样后的点云，也是后面匹配主要使用的点云
 ```
 
 
@@ -269,6 +283,40 @@ blind 是近距离滤波阈值，单位米。在avia_handler() 里过滤近点�
 在plane_judge()、edge_jump_judge() 等特征判断里也会用
 voxel/downsample 有没有做？
 有，做了，而且是后端匹配前做的。
+```
+
+点云的格式转换
+```
+原始可能是：
+msg->points[i].x
+msg->points[i].y
+msg->points[i].z
+msg->points[i].reflectivity
+msg->points[i].offsettime
+
+转换成FAST_LIO/PCL常用的点类型:
+pl_full[i].x = msg->points[i].x
+pl_full[i].y = msg->points[i].y
+pl_full[i].z = msg->points[i].z
+pl_full[i].intensity = msg->points[i].reflectivity       (强烈、强度)     (反射) 
+pl_full[i].x = msg->points[i].x
+pl_full[i].curvature = msg->points[i].offset_time / float(1000000)
+
+```
+涉及的一些转换关系过程
+```
+原始Livox消息msg
+    |
+    ↓
+pl_full 格式转换后的当前帧完整点云
+    |
+    |  筛选：tag、line、降采样、去重复、去盲区
+    ↓
+pl_surf 最终保留下来的有效点/面点
+    |
+    ↓
+后端去畸变、地图匹配、ESKF更新
+
 ```
 
 
