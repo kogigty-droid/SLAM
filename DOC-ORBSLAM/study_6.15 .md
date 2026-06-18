@@ -361,8 +361,180 @@ IMU 预测：用相邻 IMU 的平均 acc / gyro，调用 kf_state.predict(dt, Q,
 点云去畸变：利用点的 curvature 时间戳，计算每个点采集时刻的位姿，把点补偿到当前帧末端坐标系。
 ```
 
+# 8. 主要函数之：构造点到平面残差方程：h_share_model()
+  该函数在这个函数kf.update_iterated_dyn_share_modified(...)的执行过程中被调用
+## 作用：把当前帧点云和局部地图做匹配，计算点到平面的残差，并构造 ESKF 更新需要的 H 矩阵和残差 h。
 
 
+```
+相关变量：
+feats_down_body     当前帧去畸变后、降采样后的点云 坐标系是 body/IMU 或雷达体坐标相关坐标
+feats_down_world     把feats_down_body通过当前状态s 转到世界坐标系之后的点云
+feats_down_size     feats_down_body 的点数
+point_body    当前点在body坐标系下的坐标
+point_world    当前点转换到世界坐标系之后的坐标
+Nearest_Points[i]    第i个点在ikd-tree地图中搜索到的最近邻点集合
+pointSearchSqDis    最近邻点的距离一般是平方距离
+point_selected_surf[i]    第i个点是否被认为是有效的平面匹配点
+pabcd    拟合出来的平面参数：a,b,c,d   这里：平面方程：a*x+b*y+c*z+d=0
+pd2    当前点到拟合平面的有符号距离/残差
+normvec    临时保存每个点对应的平面法向量和残差
+            x,y,z    平面法向量
+            intensity     点到平面的距离 pd2
+laserCloudOri    最终筛选出来的有效点云 body坐标系
+corr_normvect    和laserCloudOri 一一对应的平面法向量和残差
+effct_feat_num    有效的匹配点数量
+ekfom_data.h_x    ESKF的观测雅可比H
+ekfom_data.h    ESKF的观测残差
+extrinsic_est_en    是否在线估计雷达-IMU外参
+```
+```c++
+void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data)
+{   /*
+     这里：s 表示当前ESKF状态 里面有位置、姿态、速度、IMU bias、重力、雷达到IMU外参等
+           ekfom_data: ESKF更新时用的数据结构，这个函数里面往往会填：
+                        h_x 观测雅可比矩阵 H
+                        h 残差向量
+                        valid 当前观测是否有效
+    */
+    double match_start = omp_get_wtime();
+    laserCloudOri->clear(); 
+    corr_normvect->clear(); 
+    total_residual = 0.0; 
+
+    /** closest surface search and residual computation **/
+    #ifdef MP_EN                                       //如果开启 MP_EN，这里会用 OpenMP 多线程并行处理点云。
+        omp_set_num_threads(MP_PROC_NUM);                //每个点可以独立做坐标变换，最近邻搜索，平面拟合，残差计算
+        #pragma omp parallel for
+    #endif
+    for (int i = 0; i < feats_down_size; i++)
+    {
+        PointType &point_body  = feats_down_body->points[i];   //直接引用当前帧降采样点云里的第 i 个点
+        PointType &point_world = feats_down_world->points[i];  //直接引用世界系点云数组里的第 i 个位置
+
+        /* transform to world frame */
+        V3D p_body(point_body.x, point_body.y, point_body.z);  //把 PCL 点转成 Eigen 三维向量。
+        V3D p_global(s.rot * (s.offset_R_L_I*p_body + s.offset_T_L_I) + s.pos);
+        //s.rot：从 body/IMU 坐标系 转到 world 坐标系 的旋转  s.pos：当前IMU/body系原点在世界坐标系下的位置(平移)
+        point_world.x = p_global(0);
+        point_world.y = p_global(1);
+        point_world.z = p_global(2);
+        point_world.intensity = point_body.intensity;
+
+        vector<float> pointSearchSqDis(NUM_MATCH_POINTS); //创建一个长度为 NUM_MATCH_POINTS 的距离数组
+
+        auto &points_near = Nearest_Points[i];  //Nearest_Points[i] 是第 i 个点对应的最近邻点集合
+        //在地图里找最近邻
+        if (ekfom_data.converge)    //converge  集中 收敛   只有在迭代收敛的情况下才找最近邻
+        {
+            /** Find the closest surfaces in the map **/
+            /**在局部地图 ikdtree 里，为 point_world 找 NUM_MATCH_POINTS 个最近邻点**/
+            ikdtree.Nearest_Search(point_world, NUM_MATCH_POINTS, points_near, pointSearchSqDis);
+            point_selected_surf[i] = points_near.size() < NUM_MATCH_POINTS ? false : pointSearchSqDis[NUM_MATCH_POINTS - 1] > 5 ? false : true;
+
+            /**
+            上面这个三目运算符的运用  等价于：
+            if(points_near.size() < NUM_MATCH_POINTS)   //如果邻居数量不够，丢弃。
+            {
+                point_selected_surf[i] = false;  
+            }
+            else if(pointSearchSqDis[NUM_MATCH_POINTS - 1] > 5)   //如果第 k 个邻居太远，丢弃。
+            {
+                 point_selected_surf[i] =false;
+            }
+            else
+            {
+                point_selected_surf[i] = true;   //否则认为这个点可以尝试拟合平面。
+            }
+
+            **/
+        }
+
+        if (!point_selected_surf[i]) continue;   //如果这个点不可用 就跳过
+
+        //用最近邻点拟合平面
+        VF(4) pabcd;   //四维向量
+        point_selected_surf[i] = false;
+        if (esti_plane(pabcd, points_near, 0.1f))    //esti_plane(...) 在 include/common_lib.h，核心是最小二乘拟合平面。
+        {
+            //FAST-LIO 就是想通过 ESKF 更新，让这些 pd2 尽量接近 0。
+            float pd2 = pabcd(0) * point_world.x + pabcd(1) * point_world.y + pabcd(2) * point_world.z + pabcd(3);
+            //p_body.norm() 点到雷达原点的距离。
+            float s = 1 - 0.9 * fabs(pd2) / sqrt(p_body.norm());   //残差越小，s 越接近 1；
+
+            if (s > 0.9)     //这里的s是匹配质量分数
+            {
+                point_selected_surf[i] = true;
+                normvec->points[i].x = pabcd(0);   
+                normvec->points[i].y = pabcd(1);
+                normvec->points[i].z = pabcd(2);
+                normvec->points[i].intensity = pd2;
+                res_last[i] = abs(pd2);
+            }
+        }
+    }
+    
+    effct_feat_num = 0;
+
+    for (int i = 0; i < feats_down_size; i++)
+    {
+        if (point_selected_surf[i])
+        {
+            laserCloudOri->points[effct_feat_num] = feats_down_body->points[i];
+            corr_normvect->points[effct_feat_num] = normvec->points[i];
+            total_residual += res_last[i];
+            effct_feat_num ++;
+        }
+    }
+
+    if (effct_feat_num < 1)
+    {
+        ekfom_data.valid = false;     //如果没有有效点，观测无效
+        ROS_WARN("No Effective Points! \n");
+        return;
+    }
+
+    res_mean_last = total_residual / effct_feat_num;
+    match_time  += omp_get_wtime() - match_start;
+    double solve_start_  = omp_get_wtime();
+    
+    /*** Computation of Measuremnt Jacobian matrix H and measurents vector ***/
+    ekfom_data.h_x = MatrixXd::Zero(effct_feat_num, 12); //23
+    ekfom_data.h.resize(effct_feat_num);
+
+    for (int i = 0; i < effct_feat_num; i++)
+    {
+        const PointType &laser_p  = laserCloudOri->points[i];
+        V3D point_this_be(laser_p.x, laser_p.y, laser_p.z);
+        M3D point_be_crossmat;
+        point_be_crossmat << SKEW_SYM_MATRX(point_this_be);
+        V3D point_this = s.offset_R_L_I * point_this_be + s.offset_T_L_I;
+        M3D point_crossmat;
+        point_crossmat<<SKEW_SYM_MATRX(point_this);
+
+        /*** get the normal vector of closest surface/corner ***/
+        const PointType &norm_p = corr_normvect->points[i];
+        V3D norm_vec(norm_p.x, norm_p.y, norm_p.z);
+
+        /*** calculate the Measuremnt Jacobian matrix H ***/
+        V3D C(s.rot.conjugate() *norm_vec);
+        V3D A(point_crossmat * C);
+        if (extrinsic_est_en)
+        {
+            V3D B(point_be_crossmat * s.offset_R_L_I.conjugate() * C); //s.rot.conjugate()*norm_vec);
+            ekfom_data.h_x.block<1, 12>(i,0) << norm_p.x, norm_p.y, norm_p.z, VEC_FROM_ARRAY(A), VEC_FROM_ARRAY(B), VEC_FROM_ARRAY(C);
+        }
+        else
+        {
+            ekfom_data.h_x.block<1, 12>(i,0) << norm_p.x, norm_p.y, norm_p.z, VEC_FROM_ARRAY(A), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
+        }
+
+        /*** Measuremnt: distance to the closest surface/corner ***/
+        ekfom_data.h(i) = -norm_p.intensity;
+    }
+    solve_time += omp_get_wtime() - solve_start_;
+}
+```
 
 
 
