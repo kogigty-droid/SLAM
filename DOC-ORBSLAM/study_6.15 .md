@@ -494,6 +494,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         return;
     }
 
+    //统计平均残差和耗时
     res_mean_last = total_residual / effct_feat_num;
     match_time  += omp_get_wtime() - match_start;
     double solve_start_  = omp_get_wtime();
@@ -508,6 +509,8 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         V3D point_this_be(laser_p.x, laser_p.y, laser_p.z);
         M3D point_be_crossmat;
         point_be_crossmat << SKEW_SYM_MATRX(point_this_be);
+        //<< 是 Eigen 矩阵赋值语法，叫 逗号初始化 comma initializer
+
         V3D point_this = s.offset_R_L_I * point_this_be + s.offset_T_L_I;
         M3D point_crossmat;
         point_crossmat<<SKEW_SYM_MATRX(point_this);
@@ -517,9 +520,10 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         V3D norm_vec(norm_p.x, norm_p.y, norm_p.z);
 
         /*** calculate the Measuremnt Jacobian matrix H ***/
-        V3D C(s.rot.conjugate() *norm_vec);
-        V3D A(point_crossmat * C);
-        if (extrinsic_est_en)
+        V3D C(s.rot.conjugate() *norm_vec);    //s.rot.conjugate()可以理解为旋转矩阵的逆  世界系下的法向量转回 body/IMU 相关坐标系
+                                                //用来表示外参平移对残差的影响
+        V3D A(point_crossmat * C);   //A 是残差对当前姿态扰动的雅可比相关项。
+        if (extrinsic_est_en)    //是否在线估计lidar到imu的外参
         {
             V3D B(point_be_crossmat * s.offset_R_L_I.conjugate() * C); //s.rot.conjugate()*norm_vec);
             ekfom_data.h_x.block<1, 12>(i,0) << norm_p.x, norm_p.y, norm_p.z, VEC_FROM_ARRAY(A), VEC_FROM_ARRAY(B), VEC_FROM_ARRAY(C);
@@ -530,7 +534,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         }
 
         /*** Measuremnt: distance to the closest surface/corner ***/
-        ekfom_data.h(i) = -norm_p.intensity;
+        ekfom_data.h(i) = -norm_p.intensity;      //残差 = 观测值-预测值  说明这里观测值是0
     }
     solve_time += omp_get_wtime() - solve_start_;
 }
